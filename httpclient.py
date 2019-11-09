@@ -5,6 +5,8 @@ import sys
 class Client:
     ENDCHARS = {b'', b'\n'}
     MAX_LINE = 64 * 1024
+    HTTP_PORT = 80
+    HTTPS_PORT = 443
 
     def __init__(self):
         self.connected = False
@@ -68,8 +70,13 @@ class Client:
 
 def main():
     client = Client()
-    client.connect('0.0.0.0', 8000)
-    res = client.request(b'GET / HTTP/1.1\r\n\r\n')
+    client.connect('google.com', Client.HTTP_PORT)
+    req = b'GET / HTTP/1.1\n' \
+        b'Host: 0.0.0.0:8000\n' \
+        b'Accept: text/html,application/xhtml+xml,' \
+        b'application/xml;q=0.9,*/*;q=0.8\n' \
+        b'Accept-Language: en-us\r\n\r\n'
+    res = client.request(req)
     print(f'respose {res}')
     client.disconnect()
 
