@@ -2,8 +2,10 @@ import io
 import socket
 import sys
 import logging
+import argparse
 
 from email.parser import Parser
+from defenitions import LOG_PATH
 
 
 class Client:
@@ -12,11 +14,12 @@ class Client:
     MAX_LINE = 64 * 1024
     HTTP_PORT = 80
     HTTPS_PORT = 443
+    TIMEOUT = 2
 
     def __init__(self):
         self.connected = False
-        socket.setdefaulttimeout(1)
-        logging.basicConfig(filename="client.log", level=logging.INFO)
+        logging.basicConfig(filename=LOG_PATH, level=logging.INFO)
+        socket.setdefaulttimeout(self.TIMEOUT)
         try:
             self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             logging.info(f'socket created')
@@ -28,7 +31,9 @@ class Client:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.connected = False
+        self.connection.close()
         logging.exception(exc_type, exc_val, exc_tb)
+        return True
 
     def find_host_ip(self, host):
         try:
@@ -36,9 +41,9 @@ class Client:
             logging.info(f'host ip found {ip}')
             return ip
         except socket.gaierror:
-            logging.error('Can\'t resove host')
+            logging.exception('Can\'t resove host')
 
-    def connect(self, host, port):
+    def connect(self, host, port=HTTP_PORT):
         ip = self.find_host_ip(host)
         if ip:
             try:
@@ -46,15 +51,17 @@ class Client:
                 logging.info(f'connection established to {ip}:{port}')
                 self.connected = True
             except ConnectionRefusedError as e:
-                logging.error(f'Connection refused error {e}')
+                logging.exception(f'Connection refused error {e}')
 
     def request(self, req):
+        logging.info(f'got request to send: {req}')
         if not self.connected:
-            raise ConnectionError('No connection established')
+            logging.exception('No connection established')
+            return
         try:
-            self.connection.sendall(req)
+            self.connection.sendall(bytes(req))
         except socket.error:
-            logging.error('Send failed')
+            logging.exception('Send failed')
             sys.exit()
         logging.info(f'request sent {req}')
         data = []
@@ -67,12 +74,14 @@ class Client:
                     break
                 data.append(s)
         except socket.timeout:
-            logging.error('receiving timed out')
+            logging.exception('receiving timed out')
 
         res = b''.join(data)
         file = io.BytesIO(res)
         parsed = self.parse_response(file)
-        return Response(*parsed)
+        response = Response(*parsed)
+        logging.info(f'respose: \n{response}')
+        return response
 
     def parse_response(self, file):
         status, reason = self.parse_line(file)
@@ -95,7 +104,7 @@ class Client:
         try:
             ver, status, *reason = req_line.split()
         except ValueError as e:
-            logging.error('Incorrect response syntax')
+            logging.exception('Incorrect response syntax')
             e = req_line.split()
             raise SyntaxError(e)
         return status, reason
@@ -121,33 +130,60 @@ class Client:
 class Response:
     def __init__(self, status, reason, headers=None, body=None):
         self.status = status
-        self.reason = reason
+        self.reason = ' '.join(reason)
         self.headers = headers
         self.body = body
 
     def __str__(self):
-        lim = 500
+        limit = Client.MAX_LINE
         return '\n'.join(
-            f'{k}: {str(v) if len(str(v)) < lim else str(v)[:lim]}'
+            f'{k}: '
+            f'{str(v) if not limit else str(v)[:limit]}'
             for k, v in self.__dict__.items())
 
 
+class Request:
+    def __init__(self, method, target, host, header=None, body=None):
+        self._method = method
+        self._target = target
+        self._host = host
+        self._header = header
+        self._body = body
+        req = f'{method} {target} HTTP/1.1\n' \
+              f'Host: {host}'
+        headers = '' if not header else '\n'.join(h for h in header)
+        req = f'{req}\n{headers}\r\n\r\n{body if body else ""}'
+        self._request = req
+
+    def __str__(self):
+        return self._request
+
+    def __bytes__(self):
+        return self._request.encode('utf-8')
+
+
 def main():
-    client = Client()
-    client.connect('google.com', Client.HTTP_PORT)
-    req = b'GET / HTTP/1.1\n' \
-          b'Host: 0.0.0.0:8000\n' \
-          b'Accept: text/html,application/xhtml+xml,' \
-          b'application/xml;q=0.9,*/*;q=0.8\n' \
-          b'Accept-Language: en-us\r\n\r\n'
-    res = client.request(req)
-    print(f'respose: \n{res}')
-    client.disconnect()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('host', help='Host name')
+    parser.add_argument('-p', '--port', type=int,
+                        help='Choose port', default=Client.HTTP_PORT)
+    parser.add_argument('-m', '--method', help='send GET or POST request',
+                        default='GET')
+    parser.add_argument('--target', help='Specify request url', default='/')
+    parser.add_argument('-H', '--header', action='append',
+                        help='Specify request header')
+    parser.add_argument('--body', help='Request body')
+
+    args = parser.parse_args()
+    logging.info(args)
+    with Client() as client:
+        client.connect(args.host, args.port)
+        if client.connected:
+            req = Request(args.method, args.target,
+                          args.host, args.header, args.body)
+            res = client.request(req)
+            return res.body
 
 
 if __name__ == '__main__':
-    program_name = sys.argv[0]
-    arguments = sys.argv[1:]
-    for x in arguments:
-        print(f'Argument: {x}')
-    main()
+    print(main())
