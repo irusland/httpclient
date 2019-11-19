@@ -14,7 +14,7 @@ class Client:
     MAX_LINE = 64 * 1024
     HTTP_PORT = 80
     HTTPS_PORT = 443
-    TIMEOUT = 2
+    TIMEOUT = 3
 
     def __init__(self):
         self.connected = False
@@ -32,8 +32,9 @@ class Client:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.connected = False
         self.connection.close()
-        logging.exception(exc_type, exc_val, exc_tb)
-        return True
+        if exc_val:
+            logging.exception(exc_val)
+        return False
 
     def find_host_ip(self, host):
         try:
@@ -77,6 +78,8 @@ class Client:
             logging.exception('receiving timed out')
 
         res = b''.join(data)
+        if not res:
+            return
         file = io.BytesIO(res)
         parsed = self.parse_response(file)
         response = Response(*parsed)
@@ -182,7 +185,10 @@ def main():
             req = Request(args.method, args.target,
                           args.host, args.header, args.body)
             res = client.request(req)
-            return res.body
+            if res:
+                return res.body
+            return 'Empty reply from server'
+        return 'Cannot connect to server'
 
 
 if __name__ == '__main__':

@@ -1,3 +1,4 @@
+import socket
 import sys
 import unittest
 import httpclient
@@ -52,16 +53,16 @@ class MyTestCase(unittest.TestCase):
         try:
             with Client() as _:
                 pass
-        except:
+        except socket.error:
             self.fail()
 
     def test_request(self):
-        client = self.connect()
-        self.assertTrue(client.connected)
-        req = Request('GET', '/', 'google.com')
-        res = client.request(req)
-        client.disconnect()
-        self.assertIsNotNone(res)
+        with self.connect() as client:
+            self.assertTrue(client.connected)
+            req = Request('GET', '/', 'google.com')
+            res = client.request(req)
+            self.assertIsNotNone(res)
+            self.assertNotEqual(res, 'Empty reply from server')
 
 
 if __name__ == '__main__':
