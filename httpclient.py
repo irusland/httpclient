@@ -5,7 +5,13 @@ import logging
 import argparse
 
 from email.parser import Parser
+from urllib.parse import urlparse
+
+import chardet
+
+from argparser import ArgParser
 from defenitions import LOG_PATH
+from exceptions import ImageRepresentationError, BytesDecodeError
 
 
 class Client:
@@ -14,12 +20,13 @@ class Client:
     MAX_LINE = 64 * 1024
     HTTP_PORT = 80
     HTTPS_PORT = 443
-    TIMEOUT = 3
 
-    def __init__(self):
+    def __init__(self, timeout=1):
         self.connected = False
+        self.timeout = timeout
+
         logging.basicConfig(filename=LOG_PATH, level=logging.INFO)
-        socket.setdefaulttimeout(self.TIMEOUT)
+        socket.setdefaulttimeout(self.timeout)
         try:
             self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             logging.info(f'socket created')
@@ -32,8 +39,6 @@ class Client:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.connected = False
         self.connection.close()
-        if exc_val:
-            logging.exception(exc_val)
         return False
 
     def find_host_ip(self, host):
@@ -42,7 +47,23 @@ class Client:
             logging.info(f'host ip found {ip}')
             return ip
         except socket.gaierror:
-            logging.exception('Can\'t resove host')
+            logging.exception('Can\'t resolve host')
+
+    def output(self, data, content_type, destination):
+        if destination == '-':
+            print(data)
+            logging.info('bytes printed')
+        elif destination is not None:
+            with open(destination, 'wb') as f:
+                f.write(data)
+                logging.info('File written')
+        else:
+            if content_type.startswith('image'):
+                raise ImageRepresentationError()
+            elif content_type.startswith('text'):
+                print(self.decode(data))
+            else:
+                raise BytesDecodeError()
 
     def connect(self, host, port=HTTP_PORT):
         ip = self.find_host_ip(host)
@@ -53,8 +74,12 @@ class Client:
                 self.connected = True
             except ConnectionRefusedError as e:
                 logging.exception(f'Connection refused error {e}')
+                self.connected = False
+                raise ConnectionError('Cannot connect to server')
 
     def request(self, req):
+        if not self.connected:
+            raise ConnectionError('Not connected')
         logging.info(f'got request to send: {req}')
         if not self.connected:
             logging.exception('No connection established')
@@ -75,7 +100,7 @@ class Client:
                     break
                 data.append(s)
         except socket.timeout:
-            logging.exception('receiving timed out')
+            pass
 
         res = b''.join(data)
         if not res:
@@ -99,7 +124,14 @@ class Client:
             if line in self.ENDCHARS:
                 break
             lines.append(line)
-        return b''.join(lines).decode()
+        return b''.join(lines)
+
+    @staticmethod
+    def decode(b):
+        encoding = chardet.detect(b)['encoding']
+        if encoding:
+            return str(b, encoding)
+        return str(b, 'utf-8')
 
     def parse_line(self, file):
         raw = file.readline(self.MAX_LINE + 1)
@@ -109,7 +141,7 @@ class Client:
         except ValueError as e:
             logging.exception('Incorrect response syntax')
             e = req_line.split()
-            raise SyntaxError(e)
+            raise ValueError(e)
         return status, reason
 
     def parse_headers(self, file):
@@ -166,30 +198,29 @@ class Request:
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('host', help='Host name')
-    parser.add_argument('-p', '--port', type=int,
-                        help='Choose port', default=Client.HTTP_PORT)
-    parser.add_argument('-m', '--method', help='send GET or POST request',
-                        default='GET')
-    parser.add_argument('--target', help='Specify request url', default='/')
-    parser.add_argument('-H', '--header', action='append',
-                        help='Specify request header')
-    parser.add_argument('--body', help='Request body')
+    parser = ArgParser(Client.HTTP_PORT)
+    args = parser.parse()
 
-    args = parser.parse_args()
     logging.info(args)
-    with Client() as client:
-        client.connect(args.host, args.port)
-        if client.connected:
-            req = Request(args.method, args.target,
-                          args.host, args.header, args.body)
+    try:
+        with Client(timeout=1) as client:
+            client.connect(args.url)
+            req = Request(args.method, args.path,
+                          args.url, args.header, args.body)
+            print(req)
             res = client.request(req)
-            if res:
-                return res.body
-            return 'Empty reply from server'
-        return 'Cannot connect to server'
+            content_type = res.headers.get('Content-Type')
+            client.output(res.body, content_type, args.output)
+
+    except ImageRepresentationError or BytesDecodeError:
+        print('Binary representation available only. Use "--output -" to '
+              'output it to your terminal '
+              'or consider "--output <FILE>" '
+              'to save to a file.')
+
+    except Exception as e:
+        print(e)
 
 
 if __name__ == '__main__':
-    print(main())
+    main()

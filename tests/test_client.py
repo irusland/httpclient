@@ -19,8 +19,7 @@ class MyTestCase(unittest.TestCase):
 
     def test_connect_fail(self):
         with Client() as client:
-            client.connect('')
-            self.assertFalse(client.connected)
+            self.assertRaises(ConnectionError, client.connect, '')
 
     def test_build_req(self):
         m = 'GET'
@@ -43,11 +42,25 @@ class MyTestCase(unittest.TestCase):
                                    f'\r\n\r\n{b}'.encode('utf-8'))
 
     def test_run_command_line(self):
-        args = 'google.com', '-m', 'GET', '--header', 'Accept: text/html', \
-               '--header', 'Date: Mon, 18 Nov 2019 17:17:42 GMT'
+        args = 'google.com', '--output', '-'
         testargs = ["httpclient.py", *args]
         with patch.object(sys, 'argv', testargs):
-            self.assertIsNotNone(httpclient.main())
+            try:
+                httpclient.main()
+            except Exception:
+                self.fail()
+
+    def test_run_command_line_save_file(self):
+        args = 'google.com', '--output', 'text.txt'
+        testargs = ["httpclient.py", *args]
+        with patch.object(sys, 'argv', testargs):
+            try:
+                httpclient.main()
+            except Exception:
+                self.fail()
+            with open('text.txt', 'rb') as f:
+                data = f.read()
+                self.assertIsNotNone(data)
 
     def test_context_manager(self):
         try:
