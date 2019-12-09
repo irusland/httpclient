@@ -2,7 +2,7 @@ class DecodeError(Exception):
     pass
 
 
-class ImageRepresentationError(Exception):
+class ByteFloodError(Exception):
     pass
 
 

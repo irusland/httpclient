@@ -9,9 +9,9 @@ from urllib.parse import urlparse
 
 import chardet
 
-from argparser import ArgParser
+from argparser import parse
 from defenitions import LOG_PATH
-from exceptions import ImageRepresentationError, BytesDecodeError
+from exceptions import ByteFloodError, BytesDecodeError
 
 
 class Client:
@@ -58,12 +58,10 @@ class Client:
                 f.write(data)
                 logging.info('File written')
         else:
-            if content_type.startswith('image'):
-                raise ImageRepresentationError()
-            elif content_type.startswith('text'):
+            try:
                 print(self.decode(data))
-            else:
-                raise BytesDecodeError()
+            except Exception:
+                raise ByteFloodError()
 
     def connect(self, host, port=HTTP_PORT):
         ip = self.find_host_ip(host)
@@ -86,9 +84,9 @@ class Client:
             return
         try:
             self.connection.sendall(bytes(req))
-        except socket.error:
+        except socket.error as e:
             logging.exception('Send failed')
-            sys.exit()
+            raise e
         logging.info(f'request sent {req}')
         data = []
         logging.info(f'waiting for response')
@@ -126,6 +124,11 @@ class Client:
             lines.append(line)
         return b''.join(lines)
 
+    def parse_headers(self, file):
+        headers = self.parse_body(file).decode()
+        dheaders = Parser().parsestr(headers)
+        return dheaders
+
     @staticmethod
     def decode(b):
         encoding = chardet.detect(b)['encoding']
@@ -143,17 +146,6 @@ class Client:
             e = req_line.split()
             raise ValueError(e)
         return status, reason
-
-    def parse_headers(self, file):
-        headers = []
-        while True:
-            line = file.readline(self.MAX_LINE + 1)
-            if line in self.ENDCHARS:
-                break
-            headers.append(line)
-        headers = b''.join(headers).decode()
-        dheaders = Parser().parsestr(headers)
-        return dheaders
 
     def disconnect(self):
         if self.connected:
@@ -184,8 +176,8 @@ class Request:
         self._host = host
         self._header = header
         self._body = body
-        req = f'{method} {target} HTTP/1.1\n' \
-              f'Host: {host}'
+        req = (f'{method} {target} HTTP/1.1\n'
+               f'Host: {host}')
         headers = '' if not header else '\n'.join(h for h in header)
         req = f'{req}\n{headers}\r\n\r\n{body if body else ""}'
         self._request = req
@@ -198,21 +190,18 @@ class Request:
 
 
 def main():
-    parser = ArgParser(Client.HTTP_PORT)
-    args = parser.parse()
-
+    args = parse(Client.HTTP_PORT)
     logging.info(args)
     try:
         with Client(timeout=1) as client:
             client.connect(args.url)
             req = Request(args.method, args.path,
                           args.url, args.header, args.body)
-            print(req)
             res = client.request(req)
             content_type = res.headers.get('Content-Type')
             client.output(res.body, content_type, args.output)
 
-    except ImageRepresentationError or BytesDecodeError:
+    except ByteFloodError:
         print('Binary representation available only. Use "--output -" to '
               'output it to your terminal '
               'or consider "--output <FILE>" '

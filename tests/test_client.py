@@ -1,6 +1,10 @@
+import io
+import os
 import socket
 import sys
 import unittest
+from random import random
+
 import httpclient
 
 from httpclient import Client, Request
@@ -51,16 +55,15 @@ class MyTestCase(unittest.TestCase):
                 self.fail()
 
     def test_run_command_line_save_file(self):
-        args = 'google.com', '--output', 'text.txt'
+        path = f'{random()}.txt'
+        args = 'https://google.com', '--output', path
         testargs = ["httpclient.py", *args]
         with patch.object(sys, 'argv', testargs):
-            try:
-                httpclient.main()
-            except Exception:
-                self.fail()
-            with open('text.txt', 'rb') as f:
+            httpclient.main()
+            with open(path, 'rb') as f:
                 data = f.read()
                 self.assertIsNotNone(data)
+            os.remove(path)
 
     def test_context_manager(self):
         try:
@@ -76,6 +79,17 @@ class MyTestCase(unittest.TestCase):
             res = client.request(req)
             self.assertIsNotNone(res)
             self.assertNotEqual(res, 'Empty reply from server')
+
+    def test_parse_response(self):
+        contents = 'HTTP/1.1 200 OK\nh1: h1\nh2: h2\n\nbody\n'.encode()
+        file = io.BytesIO(contents)
+        with Client() as c:
+            s, r, h, b = Client.parse_response(c, file)
+        print(s, r, h, b)
+        self.assertEqual(s, '200')
+        self.assertListEqual(r, ['OK'])
+        self.assertEqual(str(h), 'h1: h1\nh2: h2\n\n')
+        self.assertEqual(b, b'body\n')
 
 
 if __name__ == '__main__':
