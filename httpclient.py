@@ -2,16 +2,15 @@ import io
 import socket
 import sys
 import logging
-import argparse
 
 from email.parser import Parser
-from urllib.parse import urlparse
 
 import chardet
 
-from argparser import parse
+from argparser import AParser
+from backend.request import Request
+from backend.response import Response
 from defenitions import LOG_PATH
-from exceptions import ByteFloodError, BytesDecodeError
 
 
 class Client:
@@ -21,17 +20,15 @@ class Client:
     HTTP_PORT = 80
     HTTPS_PORT = 443
 
-    def __init__(self, timeout=1):
+    def __init__(self, args, timeout=1):
         self.connected = False
         self.timeout = timeout
+        self.args = args
 
         logging.basicConfig(filename=LOG_PATH, level=logging.INFO)
         socket.setdefaulttimeout(self.timeout)
-        try:
-            self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            logging.info(f'socket created')
-        except Exception as e:
-            logging.exception(e)
+        self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        logging.info(f'socket created')
 
     def __enter__(self):
         return self
@@ -41,73 +38,108 @@ class Client:
         self.connection.close()
         return False
 
-    def find_host_ip(self, host):
-        try:
-            ip = socket.gethostbyname(host)
-            logging.info(f'host ip found {ip}')
-            return ip
-        except socket.gaierror:
-            logging.exception('Can\'t resolve host')
+    def parse_content_type(self, ct: str):
+        s = ct.split('; ')
+        vals = {}
+        for sub in s:
+            k = sub.split('=')
+            if len(k) == 2:
+                key, value = k[0], k[1]
+                vals[key] = value
+            else:
+                vals['type'] = ''.join(k)
+        return vals
 
-    def output(self, data, content_type, destination):
+    def bad_response(self, res: Response):
+        if res.status in ['404', '403']:
+            return 1
+        return 0
+
+    def output(self, res: Response, destination):
+        if self.bad_response(res):
+            data = res.reason
+        else:
+            data = res.body
+            ct = self.parse_content_type(res.headers.get('Content-Type'))
+            encoding = ct.get('charset')
+            if encoding:
+                data = data.decode(encoding)
+            else:
+                data = self.decode(data)
+
         if destination == '-':
-            print(data)
+            try:
+                # for str
+                sys.stdout.write(data)
+            except Exception:
+                # for bytes
+                sys.stdout.buffer.write(data)
             logging.info('bytes printed')
         elif destination is not None:
             with open(destination, 'wb') as f:
                 f.write(data)
                 logging.info('File written')
         else:
-            try:
-                print(self.decode(data))
-            except Exception:
-                raise ByteFloodError()
+            raise IOError
 
-    def connect(self, host, port=HTTP_PORT):
-        ip = self.find_host_ip(host)
-        if ip:
-            try:
-                self.connection.connect((ip, port))
-                logging.info(f'connection established to {ip}:{port}')
-                self.connected = True
-            except ConnectionRefusedError as e:
-                logging.exception(f'Connection refused error {e}')
-                self.connected = False
-                raise ConnectionError('Cannot connect to server')
+        sys.exit(self.bad_response(res))
 
-    def request(self, req):
-        if not self.connected:
-            raise ConnectionError('Not connected')
-        logging.info(f'got request to send: {req}')
-        if not self.connected:
-            logging.exception('No connection established')
-            return
+    def connect(self, host, port=None):
+        if port is None:
+            port = Client.HTTP_PORT
         try:
-            self.connection.sendall(bytes(req))
-        except socket.error as e:
-            logging.exception('Send failed')
-            raise e
-        logging.info(f'request sent {req}')
-        data = []
-        logging.info(f'waiting for response')
-        try:
-            while True:
-                s = self.connection.recv(self.MAX_LINE)
-                logging.info(f'received {s}')
-                if s in self.ENDCHARS:
-                    break
-                data.append(s)
-        except socket.timeout:
-            pass
+            self.connection.connect((host, port))
+            logging.info(f'connection established to {host}:{port}')
+            self.connected = True
+        except ConnectionRefusedError as e:
+            logging.exception(f'Connection refused error {e}')
+            self.connected = False
+            sys.exit(1)
 
-        res = b''.join(data)
-        if not res:
-            return
-        file = io.BytesIO(res)
-        parsed = self.parse_response(file)
-        response = Response(*parsed)
-        logging.info(f'respose: \n{response}')
+    def request(self, req: Request):
+        while True:
+            if not self.connected:
+                logging.exception('No connection established')
+                raise ConnectionError('Not connected')
+            logging.info(f'got request to send: {req}')
+            try:
+                self.connection.sendall(bytes(req))
+            except socket.error as e:
+                logging.exception('Send failed')
+                raise e
+            logging.info(f'request sent {req}')
+            data = []
+            logging.info(f'waiting for response')
+            try:
+                while True:
+                    s = self.connection.recv(self.MAX_LINE)
+                    logging.info(f'received {s}')
+                    if s in self.ENDCHARS:
+                        break
+                    data.append(s)
+            except socket.timeout:
+                pass
+
+            res = b''.join(data)
+            if not res:
+                return
+            with io.BytesIO(res) as file:
+                parsed = self.parse_response(file)
+                response = Response(*parsed)
+                logging.info(f'respose: \n{response}')
+            redirect = self.get_redirect(response)
+            if redirect and not req.no_redirect:
+                new_req = Request('GET', redirect,
+                                  req.host, None, None,
+                                  req.no_redirect, None)
+                req = new_req
+            else:
+                break
         return response
+
+    def get_redirect(self, res: Response):
+        if res.status == '301' and res.reason == 'Moved Permanently':
+            return res.headers.get('Location')
 
     def parse_response(self, file):
         status, reason = self.parse_line(file)
@@ -131,10 +163,14 @@ class Client:
 
     @staticmethod
     def decode(b):
-        encoding = chardet.detect(b)['encoding']
-        if encoding:
-            return str(b, encoding)
-        return str(b, 'utf-8')
+        try:
+            encoding = chardet.detect(b)['encoding']
+            if encoding:
+                return str(b, encoding)
+            else:
+                return b
+        except Exception:
+            return b
 
     def parse_line(self, file):
         raw = file.readline(self.MAX_LINE + 1)
@@ -143,8 +179,7 @@ class Client:
             ver, status, *reason = req_line.split()
         except ValueError as e:
             logging.exception('Incorrect response syntax')
-            e = req_line.split()
-            raise ValueError(e)
+            raise ValueError(req_line)
         return status, reason
 
     def disconnect(self):
@@ -154,61 +189,25 @@ class Client:
             logging.info(f'connection closed')
 
 
-class Response:
-    def __init__(self, status, reason, headers=None, body=None):
-        self.status = status
-        self.reason = ' '.join(reason)
-        self.headers = headers
-        self.body = body
-
-    def __str__(self):
-        limit = Client.MAX_LINE
-        return '\n'.join(
-            f'{k}: '
-            f'{str(v) if not limit else str(v)[:limit]}'
-            for k, v in self.__dict__.items())
-
-
-class Request:
-    def __init__(self, method, target, host, header=None, body=None):
-        self._method = method
-        self._target = target
-        self._host = host
-        self._header = header
-        self._body = body
-        req = (f'{method} {target} HTTP/1.1\n'
-               f'Host: {host}')
-        headers = '' if not header else '\n'.join(h for h in header)
-        req = f'{req}\n{headers}\r\n\r\n{body if body else ""}'
-        self._request = req
-
-    def __str__(self):
-        return self._request
-
-    def __bytes__(self):
-        return self._request.encode('utf-8')
-
-
 def main():
-    args = parse(Client.HTTP_PORT)
+    parser = AParser()
+    args = parser.parse()
     logging.info(args)
     try:
-        with Client(timeout=1) as client:
-            client.connect(args.url)
+        with Client(args, timeout=1) as client:
+            client.connect(args.url, args.port)
             req = Request(args.method, args.path,
-                          args.url, args.header, args.body)
+                          args.url, args.header, args.body,
+                          args.no_redirects, args.form)
             res = client.request(req)
-            content_type = res.headers.get('Content-Type')
-            client.output(res.body, content_type, args.output)
+            # print(res)
+            client.output(res, args.output)
 
-    except ByteFloodError:
-        print('Binary representation available only. Use "--output -" to '
-              'output it to your terminal '
-              'or consider "--output <FILE>" '
-              'to save to a file.')
-
+    except SystemExit:
+        raise
     except Exception as e:
-        print(e)
+        sys.stderr.write(e.__str__())
+        # print(e)
 
 
 if __name__ == '__main__':

@@ -8,5 +8,3 @@ class ByteFloodError(Exception):
 
 class BytesDecodeError(Exception):
     pass
-
-
