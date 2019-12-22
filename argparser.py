@@ -1,5 +1,4 @@
 import argparse
-import sys
 from urllib.parse import urlparse
 
 

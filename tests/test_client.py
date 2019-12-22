@@ -7,6 +7,7 @@ from random import random
 
 import httpclient
 from argparser import AParser
+from backend.response import Response
 
 from httpclient import Client
 from backend.request import Request
@@ -48,27 +49,6 @@ class ClientTestCase(unittest.TestCase):
                          f'Accept: */*\n'
                          f'Content-Length: {len(b)}'
                          f'\r\n\r\n{b}\r\n'.encode('utf-8'), bytes(r))
-
-    #
-    # def test_run_command_line(self):
-    #     args = 'google.com', '--output', '-'
-    #     testargs = ["httpclient.py", *args]
-    #     with patch.object(sys, 'argv', testargs):
-    #         try:
-    #             httpclient.main()
-    #         except Exception:
-    #             self.fail()
-    #
-    # def test_run_command_line_save_file(self):
-    #     path = f'{random()}.txt'
-    #     args = 'https://google.com', '--output', path
-    #     testargs = ["httpclient.py", *args]
-    #     with patch.object(sys, 'argv', testargs):
-    #         httpclient.main()
-    #         with open(path, 'rb') as f:
-    #             data = f.read()
-    #             os.remove(path)
-    #             self.assertIsNotNone(data)
 
     class MockClient:
         def __init__(self):
@@ -141,6 +121,33 @@ class ClientTestCase(unittest.TestCase):
             res = client.request(req)
             self.assertIsNotNone(res)
             self.assertNotEqual(res, 'Empty reply from server')
+
+    def test_ct_parse(self):
+        ct = Client.parse_content_type('text/html; charset=utf-8')
+        self.assertEqual(ct.get('charset'), 'utf-8')
+
+    def test_bad_req(self):
+        res: Response = Response('404', 'Not Found')
+        br = Client.bad_response(res)
+        self.assertEqual(br, 1)
+
+    def test_not_bad_req(self):
+        res: Response = Response('200', 'OK')
+        br = Client.bad_response(res)
+        self.assertEqual(br, 0)
+
+    def test_output_no_dest(self):
+        res = Response('200', 'OK',
+                       {'Content-Type': 'text/html; charset=utf-8'},
+                       b'body')
+        with self.assertRaises(IOError):
+            Client.output(Client(None), res, None)
+
+    def test_output_stdout(self):
+        res = Response('200', 'OK',
+                       {'Content-Type': 'text/html; charset=utf-8'},
+                       b'body')
+        Client.output(Client(None), res, '-')
 
     def test_parse_response(self):
         contents = 'HTTP/1.1 200 OK\nh1: h1\nh2: h2\n\nbody\n'.encode()

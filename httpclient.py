@@ -38,7 +38,8 @@ class Client:
         self.connection.close()
         return False
 
-    def parse_content_type(self, ct: str):
+    @staticmethod
+    def parse_content_type(ct: str) -> dict:
         s = ct.split('; ')
         vals = {}
         for sub in s:
@@ -50,7 +51,8 @@ class Client:
                 vals['type'] = ''.join(k)
         return vals
 
-    def bad_response(self, res: Response):
+    @staticmethod
+    def bad_response(res: Response):
         if res.status in ['404', '403']:
             return 1
         return 0
@@ -82,7 +84,8 @@ class Client:
         else:
             raise IOError
 
-        sys.exit(self.bad_response(res))
+        if self.bad_response(res):
+            sys.exit(1)
 
     def connect(self, host, port=None):
         if port is None:
@@ -137,7 +140,8 @@ class Client:
                 break
         return response
 
-    def get_redirect(self, res: Response):
+    @staticmethod
+    def get_redirect(res: Response):
         if res.status == '301' and res.reason == 'Moved Permanently':
             return res.headers.get('Location')
 
@@ -200,14 +204,12 @@ def main():
                           args.url, args.header, args.body,
                           args.no_redirects, args.form)
             res = client.request(req)
-            # print(res)
             client.output(res, args.output)
 
     except SystemExit:
         raise
     except Exception as e:
         sys.stderr.write(e.__str__())
-        # print(e)
 
 
 if __name__ == '__main__':
