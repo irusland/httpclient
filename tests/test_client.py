@@ -1,22 +1,15 @@
 import io
-import os
 import socket
 import sys
 import unittest
-from random import random
 
-import httpclient
-from argparser import AParser
-from backend.response import Response
-
-from httpclient import Client
-from backend.request import Request
-from unittest.mock import patch
+from backend.client_backend import Client
+from backend.query import Request, Response
 
 
 class ClientTestCase(unittest.TestCase):
     def connect(self):
-        client = Client(AParser())
+        client = Client()
         client.connect('google.com')
         return client
 
@@ -25,7 +18,7 @@ class ClientTestCase(unittest.TestCase):
             self.assertTrue(client.connected)
 
     def test_connect_fail(self):
-        with Client(AParser()) as client:
+        with Client() as client:
             self.assertRaises(SystemExit, client.connect, '')
 
     def test_build_req(self):
@@ -74,10 +67,10 @@ class ClientTestCase(unittest.TestCase):
 
     def test_decode(self):
         enc = 'utf-8'
-        s = 'ascii'
-        b = s.encode(enc)
-        dec = Client.decode(b)
-        self.assertEqual(dec, s)
+        string = 'test_string'
+        encoded = string.encode(enc)
+        decoded = Client.decode(encoded)
+        self.assertEqual(decoded, string)
 
     def test_no_decode(self):
         b = b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10' \
@@ -109,7 +102,7 @@ class ClientTestCase(unittest.TestCase):
 
     def test_context_manager(self):
         try:
-            with Client(AParser()) as _:
+            with Client() as _:
                 pass
         except socket.error:
             self.fail()
@@ -136,29 +129,58 @@ class ClientTestCase(unittest.TestCase):
         br = Client.bad_response(res)
         self.assertEqual(br, 0)
 
+    def test_parse_res(self):
+        res = Response('200', 'OK', {}, 'body')
+        res.headers = {}
+        body = Client.parse_res(Client(), res)
+        self.assertEqual(body, 'body')
+
+    def test_parse_args(self):
+        sys.argv = ['client_backend.py', 'http://urgu.org/c.png']
+
+        args = Client().parse()
+        self.assertEqual(args.url, 'urgu.org')
+        self.assertEqual(args.path, '/c.png')
+        self.assertEqual(args.method, 'GET')
+        self.assertEqual(args.output, '-')
+        self.assertEqual(args.user_agent, 'httpclient/0.4.5')
+
     def test_output_no_dest(self):
         res = Response('200', 'OK',
                        {'Content-Type': 'text/html; charset=utf-8'},
                        b'body')
         with self.assertRaises(IOError):
-            Client.output(Client(None), res, None)
+            Client.output(Client(None), res, '', '')
 
     def test_output_stdout(self):
         res = Response('200', 'OK',
                        {'Content-Type': 'text/html; charset=utf-8'},
                        b'body')
-        Client.output(Client(None), res, '-')
+        Client.output(Client(None), res, '-', '')
 
     def test_parse_response(self):
-        contents = 'HTTP/1.1 200 OK\nh1: h1\nh2: h2\n\nbody\n'.encode()
+        contents = 'HTTP/1.1 200 OK\r\nh1: h1\r\nh2: ' \
+                   'h2\r\n\r\nbody\r\n'.encode()
         file = io.BytesIO(contents)
-        with Client(AParser()) as c:
+        with Client() as c:
             s, r, h, b = Client.parse_response(c, file)
         self.assertEqual(s, '200')
         self.assertListEqual(r, ['OK'])
         self.assertEqual(str(h), 'h1: h1\nh2: h2\n\n')
-        self.assertEqual(b, b'body\n')
+        self.assertEqual(b, b'body\r\n')
 
+    def test_cookie(self):
+        sys.argv = ['client_backend.py', 'http://a.com', '--cookie',
+                    'a=a', '--cookie', 'b=b']
+        args = Client().parse()
+        self.assertIn('Cookie: a=a; b=b', args.header)
+
+    def test_form_data(self):
+        sys.argv = ['client_backend.py', 'http://a.com', '-F',
+                    'a=a', '--form', 'b=b']
+        args = Client().parse()
+        self.assertEqual(args.method, 'POST')
+        self.assertEqual(args.form, ['a=a', 'b=b'])
 
 if __name__ == '__main__':
     unittest.main()

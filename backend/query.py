@@ -26,3 +26,18 @@ class Request:
 
     def __bytes__(self):
         return self.request.encode('utf-8')
+
+
+class Response:
+    def __init__(self, status, reason, headers=None, body=''):
+        if headers is None:
+            headers = {}
+        self.status = status
+        self.reason = ' '.join(reason)
+        self.headers = headers
+        self.body = body
+
+    def __str__(self):
+        return '\n'.join(
+            f'{k}: {str(v)}'
+            for k, v in self.__dict__.items())
