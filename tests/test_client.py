@@ -3,6 +3,7 @@ import socket
 import sys
 import unittest
 
+import httpclient
 from backend.client_backend import Client
 from backend.query import Request, Response
 
@@ -181,6 +182,16 @@ class ClientTestCase(unittest.TestCase):
         args = Client().parse()
         self.assertEqual(args.method, 'POST')
         self.assertEqual(args.form, ['a=a', 'b=b'])
+
+    def test_main(self):
+        sys.argv = ['httpclient.py', 'http://e1.ru/', '--no-redirects']
+        httpclient.main()
+
+    def test_main_exception(self):
+        sys.argv = ['httpclient.py', '']
+        with self.assertRaises(SystemExit):
+            httpclient.main()
+
 
 if __name__ == '__main__':
     unittest.main()
