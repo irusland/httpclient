@@ -14,14 +14,6 @@ class ClientTestCase(unittest.TestCase):
         client.connect('google.com')
         return client
 
-    def test_connect(self):
-        with self.connect() as client:
-            self.assertTrue(client.connected)
-
-    def test_connect_fail(self):
-        with Client() as client:
-            self.assertRaises(SystemExit, client.connect, '')
-
     def test_build_req(self):
         m = 'GET'
         t = '/'
@@ -37,12 +29,12 @@ class ClientTestCase(unittest.TestCase):
         self.assertEqual(r.headers, hs)
         self.assertEqual(r.body, b)
 
-        self.assertEqual(f'{m} {t} HTTP/1.1\n'
-                         f'Host: {h}\n'
-                         f'{hs[0]}\n'
-                         f'Accept: */*\n'
-                         f'Content-Length: {len(b)}'
-                         f'\r\n\r\n{b}\r\n'.encode('utf-8'), bytes(r))
+        self.assertEqual(f'{m} {t} HTTP/1.1\r\n'
+                         f'Host: {h}\r\n'
+                         f'{hs[0]}\r\n'
+                         f'Accept: */*\r\n'
+                         f'Content-Length: {len(b)}\r\n'
+                         f'\r\n{b}'.encode('utf-8'), bytes(r))
 
     class MockClient:
         def __init__(self):
@@ -74,19 +66,7 @@ class ClientTestCase(unittest.TestCase):
         self.assertEqual(decoded, string)
 
     def test_no_decode(self):
-        b = b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10' \
-            b'\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f ' \
-            b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[' \
-            b'\\]^_`abcdefghijklmnopqrstuvwxyz{' \
-            b'|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c' \
-            b'\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b' \
-            b'\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa' \
-            b'\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9' \
-            b'\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8' \
-            b'\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7' \
-            b'\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6' \
-            b'\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5' \
-            b'\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\\x '
+        b = b'\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\\x '
         dec = Client.decode(b)
         self.assertEqual(dec, b)
 
@@ -108,56 +88,95 @@ class ClientTestCase(unittest.TestCase):
         except socket.error:
             self.fail()
 
+    class ClientMock(Client):
+        def __init__(self):
+            super().__init__()
+            self.connected = True
+            self.connection = ClientTestCase.ConnectionMock()
+            self.MAX_LINE = 10000
+            self.ENDCHARS = [b'\r\n', b'']
+
+    class ConnectionMock:
+        SENT = False
+
+        def sendall(self, *args):
+            pass
+
+        def recv(self, *args):
+            if not self.SENT:
+                self.SENT = True
+                return (b'HTTP/1.1 200 OK\r\n'
+                        b'Server: httpserver\r\n'
+                        b'Content-Length: 12\r\n'
+                        b'\r\n'
+                        b'1234567890\r\n')
+            return b''
+
     def test_request(self):
-        with self.connect() as client:
-            self.assertTrue(client.connected)
-            req = Request('GET', '/', 'google.com')
-            res = client.request(req)
-            self.assertIsNotNone(res)
-            self.assertNotEqual(res, 'Empty reply from server')
+        res = Client.request(ClientTestCase.ClientMock(),
+                             Request('GET', '/', 'HTTP/1.1'))
+        self.assertEqual(res.status, '200')
+        self.assertEqual(res.reason, 'OK')
+        self.assertListEqual(list(res.headers.items()),
+                             [('Server', 'httpserver'),
+                              ('Content-Length', '12')])
+        self.assertEqual(res.body, b'1234567890\r\n')
 
     def test_ct_parse(self):
         ct = Client.parse_content_type('text/html; charset=utf-8')
         self.assertEqual(ct.get('charset'), 'utf-8')
 
     def test_bad_req(self):
-        res: Response = Response('404', 'Not Found')
+        res: Response = Response()
+        res.status = '404'
+        res.reason = 'Not Found'
         br = Client.bad_response(res)
         self.assertEqual(br, 1)
 
     def test_not_bad_req(self):
-        res: Response = Response('200', 'OK')
+        res: Response = Response()
+        res.status = '200'
+        res.reason = 'OK'
         br = Client.bad_response(res)
         self.assertEqual(br, 0)
 
     def test_parse_res(self):
-        res = Response('200', 'OK', {}, 'body')
+        res = Response()
+        res.status = '200'
+        res.reason = 'OK'
         res.headers = {}
+        res.body = 'body'
         body = Client.parse_res(Client(), res)
         self.assertEqual(body, 'body')
 
     def test_parse_args(self):
         sys.argv = ['client_backend.py', 'http://urgu.org/c.png']
 
-        args = Client().parse()
+        args = httpclient.parse()
         self.assertEqual(args.url, 'urgu.org')
         self.assertEqual(args.path, '/c.png')
         self.assertEqual(args.method, 'GET')
-        self.assertEqual(args.output, '-')
+        self.assertEqual(args.output, None)
         self.assertEqual(args.user_agent, 'httpclient/0.4.5')
 
     def test_output_no_dest(self):
-        res = Response('200', 'OK',
-                       {'Content-Type': 'text/html; charset=utf-8'},
-                       b'body')
+        res = Response()
+        res.status = '200'
+        res.reason = 'OK'
+        res.headers = {'Content-Type': 'text/html; charset=utf-8'}
+        res.body = b'body'
+
         with self.assertRaises(IOError):
             Client.output(Client(None), res, '', '')
 
     def test_output_stdout(self):
-        res = Response('200', 'OK',
-                       {'Content-Type': 'text/html; charset=utf-8'},
-                       b'body')
-        Client.output(Client(None), res, '-', '')
+        res = Response()
+        res.status = '200'
+        res.reason = 'OK'
+        res.headers = {'Content-Type': 'text/html; charset=utf-8'}
+        res.body = b'body'
+
+        Client.output(Client(None), res, None, '')
 
     def test_parse_response(self):
         contents = 'HTTP/1.1 200 OK\r\nh1: h1\r\nh2: ' \
@@ -173,19 +192,15 @@ class ClientTestCase(unittest.TestCase):
     def test_cookie(self):
         sys.argv = ['client_backend.py', 'http://a.com', '--cookie',
                     'a=a', '--cookie', 'b=b']
-        args = Client().parse()
+        args = httpclient.parse()
         self.assertIn('Cookie: a=a; b=b', args.header)
 
     def test_form_data(self):
         sys.argv = ['client_backend.py', 'http://a.com', '-F',
                     'a=a', '--form', 'b=b']
-        args = Client().parse()
+        args = httpclient.parse()
         self.assertEqual(args.method, 'POST')
         self.assertEqual(args.form, ['a=a', 'b=b'])
-
-    def test_main(self):
-        sys.argv = ['httpclient.py', 'http://e1.ru/', '--no-redirects']
-        httpclient.main()
 
     def test_main_exception(self):
         sys.argv = ['httpclient.py', '']

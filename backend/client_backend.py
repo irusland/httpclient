@@ -1,5 +1,5 @@
-import argparse
 import io
+import math
 import socket
 import sys
 import logging
@@ -10,7 +10,6 @@ import chardet
 
 from backend.query import Request, Response
 from defenitions import LOG_PATH
-from urllib.parse import urlparse
 
 
 class Client:
@@ -39,53 +38,14 @@ class Client:
         return False
 
     @staticmethod
-    def parse():
-        parser = argparse.ArgumentParser()
-        parser.add_argument('url', help='Url to request')
-        parser.add_argument('-m', '--method',
-                            help='send GET or POST request',
-                            choices=['GET', 'POST'],
-                            default='GET')
-        parser.add_argument('-F', '--form', action='append',
-                            help='Form-data',
-                            default=[])
-        parser.add_argument('-H', '--header', action='append',
-                            help='Specify request header',
-                            default=[])
-        parser.add_argument('--body', help='Request body'),
-        parser.add_argument('--user-agent', help='Specify UA for request',
-                            default='httpclient/0.4.5')
-        parser.add_argument('--cookie', action='append',
-                            help='Specify request cookies',
-                            default=[])
-        parser.add_argument('-o', '--output',
-                            default='-',
-                            help='Use "--output <FILENAME>" to '
-                                 'print save to file')
-        parser.add_argument('--no-redirects', action='store_true')
-
-        args = parser.parse_args()
-        url = urlparse(args.url)
-        args.url = url.netloc.split(':')[0]
-        args.path = url.path or '/'
-        args.port = url.port
-        args.header.append(f'User-Agent: {args.user_agent}')
-        args.header.append(f'Connection: keep-alive')
-        if args.cookie:
-            args.header.append(f'Cookie: {"; ".join(args.cookie)}')
-        if args.form:
-            args.method = 'POST'
-        return args
-
-    @staticmethod
-    def parse_content_type(ct: str) -> dict:
+    def parse_content_type(ct):
         if not ct:
             return {}
         s = ct.split('; ')
         vals = {}
         for sub in s:
             if '=' in sub:
-                k = sub.split('=', maxsplit=2)
+                k = sub.split('=', maxsplit=1)
                 key, value = k[0], k[1]
                 vals[key] = value
             else:
@@ -94,9 +54,7 @@ class Client:
 
     @staticmethod
     def bad_response(res: Response):
-        if res.status in ['404', '403']:
-            return True
-        return False
+        return res.status in ['404', '403']
 
     def parse_res(self, res: Response):
         if self.bad_response(res):
@@ -115,23 +73,19 @@ class Client:
         return data
 
     def output(self, res: Response, destination: str, data: str) -> None:
-        if destination == '-':
+        if destination is None:
             try:
-                # for str
                 sys.stdout.write(data)
             except Exception:
-                # for bytes
                 sys.stdout.buffer.write(data)
             logging.info('bytes printed')
-        elif destination is not None:
+        else:
             with open(destination, 'w') as f:
                 f.write(data)
                 logging.info('File written')
-        else:
-            raise IOError
 
-        if self.bad_response(res):
-            sys.exit(1)
+        if Client.bad_response(res):
+            raise Exception('Bad response')
 
     def connect(self, host, port=None):
         if port is None:
@@ -143,49 +97,46 @@ class Client:
         except ConnectionRefusedError as e:
             logging.exception(f'Connection refused error {e}')
             self.connected = False
-            sys.exit(1)
 
     def request(self, req: Request):
+        redir_count = 0
         while True:
             if not self.connected:
-                logging.exception('No connection established')
+                logging.error('No connection established')
                 raise ConnectionError('Not connected')
             logging.info(f'got request to send: {req}')
             try:
                 self.connection.sendall(bytes(req))
-            except socket.error as e:
+            except socket.error:
                 logging.exception('Send failed')
-                raise e
+                raise
             logging.info(f'request sent {req}')
-            data = []
             logging.info(f'waiting for response')
-            try:
-                while True:
-                    s = self.connection.recv(self.MAX_LINE)
-                    logging.info(f'received {s}')
-                    if s in self.ENDCHARS:
-                        break
-                    data.append(s)
-            except socket.timeout:
-                pass
+            res_builder = Response()
+            break_out = False
+            while not break_out:
+                try:
+                    while not break_out:
+                        line = self.connection.recv(self.MAX_LINE)
+                        split = Response.split_keep_sep(line, b'\r\n')
+                        for s in split:
+                            logging.info(f'received {s}')
+                            if res_builder.dynamic_fill(s):
+                                break_out = True
+                                break
+                except socket.timeout:
+                    logging.info(f'body not received, waiting')
 
-            res = b''.join(data)
-            if not res:
-                return
-            with io.BytesIO(res) as file:
-                parsed = self.parse_response(file)
-                res = Response(*parsed)
-                if int(res.headers.get('Content-Length')) != len(res.body):
-                    raise Exception('Content Length insufficient')
-                logging.info(f'respose: \n{res}')
-            redirect = self.get_redirect(res)
-            if redirect and not req.no_redirect:
+            redirect = self.get_redirect(res_builder)
+            if redirect and not req.no_redirect and \
+                    (not req.max_redir or redir_count < req.max_redir):
+                redir_count += 1
                 req = Request('GET', redirect,
-                              req.host, None, None,
-                              req.no_redirect, None)
+                              req.host, no_redir=req.no_redirect,
+                              max_redir=req.max_redir)
             else:
                 break
-        return res
+        return res_builder
 
     @staticmethod
     def get_redirect(res: Response):
@@ -195,13 +146,17 @@ class Client:
     def parse_response(self, file):
         status, reason = self.parse_line(file)
         headers = self.parse_headers(file)
-        body = self.parse_body(file)
+        body = self.parse_body(file, headers.get('Content-Length'))
         return status, reason, headers, body
 
-    def parse_body(self, file):
+    def parse_body(self, file, content_len=None):
         lines = []
-        while True:
+        if content_len is None:
+            content_len = -1
+        content_len = int(content_len)
+        while True and content_len:
             line = file.readline(self.MAX_LINE + 1)
+            content_len -= len(line)
             if line in self.ENDCHARS:
                 break
             lines.append(line)
