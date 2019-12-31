@@ -30,8 +30,10 @@ def parse():
                         default=None,
                         help='Use "--output <FILENAME>" to '
                              'print save to file')
-    parser.add_argument('--no-redirects', action='store_true')
-    parser.add_argument('--max-redirects', type=int, default=10)
+    parser.add_argument('--no-redirects', action='store_true',
+                        help='No redirect parameter')
+    parser.add_argument('--max-redirects', type=int, default=10,
+                        help='Maximum redirect count')
     parser.add_argument('--timeout', default=1, help='Set timeout for client')
 
     args = parser.parse_args()
