@@ -1,5 +1,3 @@
-import io
-import math
 import socket
 import sys
 import logging
@@ -45,8 +43,7 @@ class Client:
         vals = {}
         for sub in s:
             if '=' in sub:
-                k = sub.split('=', maxsplit=1)
-                key, value = k[0], k[1]
+                key, value = sub.split('=', maxsplit=1)
                 vals[key] = value
             else:
                 vals['type'] = sub
@@ -72,7 +69,7 @@ class Client:
                 data = self.decode(data)
         return data
 
-    def output(self, res: Response, destination: str, data: str) -> None:
+    def output(self, res: Response, destination, data):
         if destination is None:
             try:
                 sys.stdout.write(data)
@@ -80,7 +77,11 @@ class Client:
                 sys.stdout.buffer.write(data)
             logging.info('bytes printed')
         else:
-            with open(destination, 'w') as f:
+            if isinstance(data, str):
+                mode = 'w'
+            else:
+                mode = 'wb'
+            with open(destination, mode) as f:
                 f.write(data)
                 logging.info('File written')
 

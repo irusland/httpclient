@@ -1,4 +1,7 @@
+import logging
+import random
 import re
+import string
 from email.message import Message
 from email.parser import Parser
 
@@ -11,14 +14,22 @@ class Request:
         self.method = method
         self.target = target
         self.host = host
+        self.form = form
         self.headers = add_header or []
-        self.body = body or '&'.join(form or [])
+        self.body = body
         self.no_redirect = no_redir
         self.max_redir = max_redir
 
         req = (f'{method} {target} HTTP/1.1\r\n'
                f'Host: {host}')
         self.headers.append(f'Accept: */*')
+
+        if self.form:
+            boundary = self.make_boundary()
+            ct = f'Content-Type: multipart/form-data; boundary={boundary}'
+            self.headers.append(ct)
+            self.body = self.make_multipart(self.form, boundary)
+
         if self.body:
             self.headers.append(f'Content-Length: {len(self.body)}')
 
@@ -37,6 +48,28 @@ class Request:
 
     def __bytes__(self):
         return self.request.encode('utf-8')
+
+    def make_boundary(self):
+        length = 40
+        chars = 16
+        dashes = length - chars
+        return ('-' * dashes) + ''.join(random.choices(
+            string.ascii_lowercase + string.digits, k=chars))
+
+    def make_multipart(self, form, boundary):
+        res = []
+        for f in form:
+            name, value = f.split('=', maxsplit=2)
+            res.append(f'--{boundary}')
+            res.append(f'{self.make_disposition(name)}')
+            res.append(f'')
+            res.append(f'{value}')
+
+        res.append(f'--{boundary}--\r\n')
+        return '\r\n'.join(res)
+
+    def make_disposition(self, name):
+        return f'Content-Disposition: form-data; name="{name}"'
 
 
 class Response:
@@ -80,7 +113,8 @@ class Response:
             self.body += line
             self._body_to_read -= len(line)
             if self._body_to_read < 0:
-                raise Exception('Content-Length was less than body len')
+                logging.error('Content-Length was less than body len')
+                return True
             if self._body_to_read == 0:
                 self.filled = True
                 return True

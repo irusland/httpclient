@@ -47,6 +47,7 @@ def parse():
         args.header.append(f'Cookie: {"; ".join(args.cookie)}')
     if args.form:
         args.method = 'POST'
+
     return args
 
 
@@ -65,7 +66,7 @@ def main():
             client.output(res, args.output, body)
 
     except Exception as e:
-        sys.stderr.write(str(e) + '\r\n')
+        sys.stderr.write(str(e) + '\n')
         sys.exit(1)
 
 

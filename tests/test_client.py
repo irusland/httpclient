@@ -1,11 +1,14 @@
 import io
+import multiprocessing
 import socket
 import sys
+import time
 import unittest
 
 import httpclient
 from backend.client_backend import Client
 from backend.query import Request, Response
+from aiohttp import web
 
 
 class ClientTestCase(unittest.TestCase):
@@ -146,8 +149,9 @@ class ClientTestCase(unittest.TestCase):
         res.reason = 'OK'
         res.headers = {}
         res.body = 'body'
-        body = Client.parse_res(Client(), res)
-        self.assertEqual(body, 'body')
+        with Client() as c:
+            body = c.parse_res(res)
+            self.assertEqual(body, 'body')
 
     def test_parse_args(self):
         sys.argv = ['client_backend.py', 'http://urgu.org/c.png']
@@ -176,7 +180,8 @@ class ClientTestCase(unittest.TestCase):
         res.headers = {'Content-Type': 'text/html; charset=utf-8'}
         res.body = b'body'
 
-        Client.output(Client(None), res, None, '')
+        with Client(None) as c:
+            c.output(res, None, '')
 
     def test_parse_response(self):
         contents = 'HTTP/1.1 200 OK\r\nh1: h1\r\nh2: ' \
@@ -190,17 +195,34 @@ class ClientTestCase(unittest.TestCase):
         self.assertEqual(b, b'body\r\n')
 
     def test_cookie(self):
-        sys.argv = ['client_backend.py', 'http://a.com', '--cookie',
-                    'a=a', '--cookie', 'b=b']
-        args = httpclient.parse()
-        self.assertIn('Cookie: a=a; b=b', args.header)
+        cookie = ['a=a', 'b=b']
+        args = {'body': None,
+                'cookie': cookie,
+                'form': [],
+                'header': ['User-Agent: httpclient/0.4.5',
+                           'Connection: keep-alive',
+                           f'Cookie: {"; ".join(cookie)}'],
+                'max_redirects': 10,
+                'method': 'GET',
+                'no_redirects': False,
+                'output': None,
+                'path': '/',
+                'port': None,
+                'timeout': 1,
+                'url': 'a.com',
+                'user_agent': 'httpclient/0.4.5'}
 
-    def test_form_data(self):
-        sys.argv = ['client_backend.py', 'http://a.com', '-F',
-                    'a=a', '--form', 'b=b']
-        args = httpclient.parse()
-        self.assertEqual(args.method, 'POST')
-        self.assertEqual(args.form, ['a=a', 'b=b'])
+        req = Request(args['method'], args['path'], args['url'],
+                      add_header=args['header'], body=args['body'],
+                      no_redir=args['no_redirects'], form=args['form'],
+                      max_redir=args['max_redirects'])
+
+        self.assertEqual(req.method, 'GET')
+        for header in req.headers:
+            if header.startswith('Cookie'):
+                self.assertEqual(header, f'Cookie: {"; ".join(cookie)}')
+                return
+        self.fail()
 
     def test_main_exception(self):
         sys.argv = ['httpclient.py', '']
