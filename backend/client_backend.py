@@ -25,6 +25,7 @@ class Client:
         logging.info(f'socket created')
 
         self.destination = output
+        # Clear file before appending
         if self.destination:
             with open(self.destination, 'w'):
                 pass
@@ -46,6 +47,7 @@ class Client:
                 sys.stdout.buffer.write(data)
             logging.info('bytes printed')
         else:
+            # Append data to file
             if isinstance(data, str):
                 mode = 'a'
             else:
@@ -90,9 +92,9 @@ class Client:
                             logging.info(f'received {s}')
                             if res_builder.dynamic_fill(s):
                                 break_out = True
-                        if not res_builder.has_redirect():
-                            body = res_builder.get_data_to_out()
-                            self.output(body)
+                            if not res_builder.has_redirect():
+                                body = res_builder.get_data_to_out()
+                                self.output(body)
                 except socket.timeout:
                     logging.info(f'body not received, waiting')
 

@@ -1,8 +1,10 @@
+import io
 import multiprocessing
 import re
 import socket
 import time
 import unittest
+from contextlib import redirect_stdout
 
 from backend.client_backend import Client
 from backend.query import Request, Response
@@ -36,12 +38,6 @@ class AioHTTPTests(unittest.TestCase):
     def test_post_form(self):
         server = multiprocessing.Process(target=self.aiohttp_server_run)
         server.start()
-        # Wait for server to boot
-        time.sleep(0.5)
-
-        ip = ('localhost', 8080)
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect(ip)
 
         form = ['a=a', 'b=b', 'key=val']
         args = {'body': None,
@@ -64,12 +60,19 @@ class AioHTTPTests(unittest.TestCase):
                       no_redir=args['no_redirects'], form=args['form'],
                       max_redir=args['max_redirects'])
 
-        res = self.get_res(s, bytes(req))
-        s.close()
-        server.terminate()
+        with Client() as c:
+            time.sleep(0.1)
+            f = io.StringIO()
+            with redirect_stdout(f):
+                while True:
+                    try:
+                        c.connect('localhost', 8080)
+                        break
+                    except socket.error:
+                        time.sleep(0.1)
+                c.request(req)
 
-        self.assertEqual(res.reason, 'OK')
-        self.assertEqual(res.status, '200')
+        server.terminate()
 
         r = re.compile(
             r'-+?.+?\r\n'
@@ -77,7 +80,7 @@ class AioHTTPTests(unittest.TestCase):
             r'\r\n'
             r'(?P<value>.+?)\r\n')
 
-        body = res.body_to_output.decode('utf-8')
+        body = f.getvalue()
         found = r.findall(body)
         res_form = '&'.join('='.join(x) for x in found)
         self.assertEqual(res_form, '&'.join(form))
@@ -85,11 +88,14 @@ class AioHTTPTests(unittest.TestCase):
     def test_get_index(self):
         server = multiprocessing.Process(target=self.aiohttp_server_run)
         server.start()
-        # Wait for server to boot
-        time.sleep(0.5)
         ip = ('localhost', 8080)
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect(ip)
+        while True:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect(ip)
+                break
+            except socket.error:
+                time.sleep(0.1)
 
         req = b'GET / HTTP/1.1\r\n\r\n'
         res = self.get_res(s, req)
@@ -102,10 +108,18 @@ class AioHTTPTests(unittest.TestCase):
     def test_connect(self):
         server = multiprocessing.Process(target=self.aiohttp_server_run)
         server.start()
-        # Wait for server to boot
-        time.sleep(0.5)
-        with Client() as c:
-            c.connect('localhost', 8080)
+
+        connected = False
+        while not connected:
+            try:
+                with Client() as c:
+                    c.connect('localhost', 8080)
+                connected = True
+                break
+            except socket.error:
+                time.sleep(0.1)
+
+        self.assertTrue(connected)
 
         server.terminate()
 

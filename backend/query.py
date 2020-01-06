@@ -5,8 +5,9 @@ import string
 from email.parser import Parser
 
 import chardet
-from pip._vendor.urllib3._collections import HTTPHeaderDict
 from tqdm import tqdm
+
+from backend.http_dict import HTTPHeadersDict
 
 
 class Request:
@@ -77,7 +78,7 @@ class Response:
     def __init__(self, show_progress=False):
         self.status = None
         self.reason = None
-        self.headers = HTTPHeaderDict()
+        self.headers = HTTPHeadersDict()
         self.body = b''
         self.content_type = None
         self.encoding = None
@@ -132,14 +133,10 @@ class Response:
             return False
 
         if self._body_to_read != 0 and self._body_to_read is not None:
-            # self.body += line
             if self.show_progress:
                 self.progress.update(len(line))
             self._body_to_read -= len(line)
-            self.body_to_output += line
-            if self._body_to_read < 0:
-                logging.error('Content-Length was less than body len')
-                return True
+            self.body_to_output = line
             if self._body_to_read == 0:
                 self.filled = True
                 return True

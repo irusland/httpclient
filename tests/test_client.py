@@ -125,24 +125,6 @@ class ClientTestCase(unittest.TestCase):
                               ('Content-Length', '12')])
         self.assertEqual(f.getvalue(), '1234567890\r\n')
 
-    # def test_ct_parse(self):
-    #     ct = Client.parse_content_type('text/html; charset=utf-8')
-    #     self.assertEqual(ct.get('charset'), 'utf-8')
-
-    # def test_bad_req(self):
-    #     res: Response = Response()
-    #     res.status = '404'
-    #     res.reason = 'Not Found'
-    #     br = Client.bad_response(res)
-    #     self.assertEqual(br, 1)
-
-    # def test_not_bad_req(self):
-    #     res: Response = Response()
-    #     res.status = '200'
-    #     res.reason = 'OK'
-    #     br = Client.bad_response(res)
-    #     self.assertEqual(br, 0)
-
     def test_image_out(self):
         res = Response()
         res.content_type = 'image/png'
@@ -154,9 +136,6 @@ class ClientTestCase(unittest.TestCase):
                 body = res.get_data_to_out()
                 c.output(body)
             self.assertEqual(f.getvalue(), b'\x89PNG')
-
-    # def test_parse_incorrect(self):
-    #     Client().parse_line()
 
     def test_parse_args(self):
         sys.argv = ['client_backend.py', 'http://urgu.org/c.png']
@@ -187,17 +166,6 @@ class ClientTestCase(unittest.TestCase):
 
         with Client() as c:
             c.output('')
-
-    # def test_parse_response(self):
-    #     contents = 'HTTP/1.1 200 OK\r\nh1: h1\r\nh2: ' \
-    #                'h2\r\n\r\nbody\r\n'.encode()
-    #     file = io.BytesIO(contents)
-    #     with Client() as c:
-    #         s, r, h, b = Client.parse_response(c, file)
-    #     self.assertEqual(s, '200')
-    #     self.assertListEqual(r, ['OK'])
-    #     self.assertEqual(str(h), 'h1: h1\nh2: h2\n\n')
-    #     self.assertEqual(b, b'body\r\n')
 
     def test_cookie(self):
         cookie = ['a=a', 'b=b']

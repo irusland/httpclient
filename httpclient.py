@@ -5,7 +5,6 @@ from urllib.parse import urlparse
 
 from backend.query import Request
 from backend.client_backend import Client
-from tqdm import tqdm
 
 
 def parse():
