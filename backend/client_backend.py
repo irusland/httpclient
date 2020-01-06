@@ -1,9 +1,6 @@
 import socket
 import sys
 import logging
-
-from email.parser import Parser
-
 import chardet
 
 from backend.query import Request, Response
@@ -17,15 +14,21 @@ class Client:
     HTTP_PORT = 80
     HTTPS_PORT = 443
 
-    def __init__(self, timeout=1):
+    def __init__(self, timeout=1, show_progress=False, output=None):
         self.connected = False
         self.timeout = timeout
 
-        logging.basicConfig(filename=LOG_PATH, filemode='w',
+        logging.basicConfig(filename=LOG_PATH, filemode='w+',
                             level=logging.INFO)
         socket.setdefaulttimeout(self.timeout)
         self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         logging.info(f'socket created')
+
+        self.destination = output
+        if self.destination:
+            with open(self.destination, 'w'):
+                pass
+        self.show_progress = show_progress
 
     def __enter__(self):
         return self
@@ -35,42 +38,8 @@ class Client:
         self.connection.close()
         return False
 
-    @staticmethod
-    def parse_content_type(ct):
-        if not ct:
-            return {}
-        s = ct.split('; ')
-        vals = {}
-        for sub in s:
-            if '=' in sub:
-                key, value = sub.split('=', maxsplit=1)
-                vals[key] = value
-            else:
-                vals['type'] = sub
-        return vals
-
-    @staticmethod
-    def bad_response(res: Response):
-        return res.status in ['404', '403']
-
-    def parse_res(self, res: Response):
-        if self.bad_response(res):
-            data = res.reason
-        else:
-            data = res.body
-            ct = self.parse_content_type(res.headers.get('Content-Type'))
-            encoding = ct.get('charset')
-            if encoding:
-                try:
-                    data = data.decode(encoding)
-                except Exception:
-                    pass
-            else:
-                data = self.decode(data)
-        return data
-
-    def output(self, res: Response, destination, data):
-        if destination is None:
+    def output(self, data):
+        if self.destination is None:
             try:
                 sys.stdout.write(data)
             except Exception:
@@ -78,15 +47,12 @@ class Client:
             logging.info('bytes printed')
         else:
             if isinstance(data, str):
-                mode = 'w'
+                mode = 'a'
             else:
-                mode = 'wb'
-            with open(destination, mode) as f:
+                mode = 'ab'
+            with open(self.destination, mode) as f:
                 f.write(data)
                 logging.info('File written')
-
-        if Client.bad_response(res):
-            raise Exception('Bad response')
 
     def connect(self, host, port=None):
         if port is None:
@@ -113,7 +79,7 @@ class Client:
                 raise
             logging.info(f'request sent {req}')
             logging.info(f'waiting for response')
-            res_builder = Response()
+            res_builder = Response(show_progress=self.show_progress)
             break_out = False
             while not break_out:
                 try:
@@ -124,11 +90,13 @@ class Client:
                             logging.info(f'received {s}')
                             if res_builder.dynamic_fill(s):
                                 break_out = True
-                                break
+                        if not res_builder.has_redirect():
+                            body = res_builder.get_data_to_out()
+                            self.output(body)
                 except socket.timeout:
                     logging.info(f'body not received, waiting')
 
-            redirect = self.get_redirect(res_builder)
+            redirect = res_builder.get_redirect()
             if redirect and not req.no_redirect and \
                     (not req.max_redir or redir_count < req.max_redir):
                 redir_count += 1
@@ -136,37 +104,10 @@ class Client:
                               req.host, no_redir=req.no_redirect,
                               max_redir=req.max_redir)
             else:
+                body = res_builder.get_data_to_out()
+                self.output(body)
                 break
         return res_builder
-
-    @staticmethod
-    def get_redirect(res: Response):
-        if res.status == '301' and res.reason == 'Moved Permanently':
-            return res.headers.get('Location')
-
-    def parse_response(self, file):
-        status, reason = self.parse_line(file)
-        headers = self.parse_headers(file)
-        body = self.parse_body(file, headers.get('Content-Length'))
-        return status, reason, headers, body
-
-    def parse_body(self, file, content_len=None):
-        lines = []
-        if content_len is None:
-            content_len = -1
-        content_len = int(content_len)
-        while True and content_len:
-            line = file.readline(self.MAX_LINE + 1)
-            content_len -= len(line)
-            if line in self.ENDCHARS:
-                break
-            lines.append(line)
-        return b''.join(lines)
-
-    def parse_headers(self, file):
-        headers = self.parse_body(file).decode()
-        dheaders = Parser().parsestr(headers)
-        return dheaders
 
     @staticmethod
     def decode(b):
@@ -176,16 +117,6 @@ class Client:
         except Exception:
             pass
         return b
-
-    def parse_line(self, file):
-        raw = file.readline(self.MAX_LINE + 1)
-        req_line = raw.decode()
-        try:
-            ver, status, *reason = req_line.split()
-        except ValueError as e:
-            logging.exception('Incorrect response syntax')
-            raise ValueError(req_line)
-        return status, reason
 
     def disconnect(self):
         if self.connected:

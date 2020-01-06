@@ -1,13 +1,9 @@
 import multiprocessing
 import re
 import socket
-import sys
 import time
 import unittest
 
-from aiohttp.web_request import BaseRequest
-
-import httpclient
 from backend.client_backend import Client
 from backend.query import Request, Response
 from aiohttp import web
@@ -40,7 +36,9 @@ class AioHTTPTests(unittest.TestCase):
     def test_post_form(self):
         server = multiprocessing.Process(target=self.aiohttp_server_run)
         server.start()
-        time.sleep(1)
+        # Wait for server to boot
+        time.sleep(0.5)
+
         ip = ('localhost', 8080)
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect(ip)
@@ -78,7 +76,8 @@ class AioHTTPTests(unittest.TestCase):
             r'Content-Disposition: form-data; name=\"(?P<name>.+?)\"\r\n'
             r'\r\n'
             r'(?P<value>.+?)\r\n')
-        body = res.body.decode('utf-8')
+
+        body = res.body_to_output.decode('utf-8')
         found = r.findall(body)
         res_form = '&'.join('='.join(x) for x in found)
         self.assertEqual(res_form, '&'.join(form))
@@ -86,7 +85,8 @@ class AioHTTPTests(unittest.TestCase):
     def test_get_index(self):
         server = multiprocessing.Process(target=self.aiohttp_server_run)
         server.start()
-        time.sleep(1)
+        # Wait for server to boot
+        time.sleep(0.5)
         ip = ('localhost', 8080)
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect(ip)
@@ -98,6 +98,16 @@ class AioHTTPTests(unittest.TestCase):
 
         self.assertEqual(res.status, '200')
         self.assertEqual(res.reason, 'OK')
+
+    def test_connect(self):
+        server = multiprocessing.Process(target=self.aiohttp_server_run)
+        server.start()
+        # Wait for server to boot
+        time.sleep(0.5)
+        with Client() as c:
+            c.connect('localhost', 8080)
+
+        server.terminate()
 
     def aiohttp_server_run(self):
         app = web.Application()

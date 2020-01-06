@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 from backend.query import Request
 from backend.client_backend import Client
+from tqdm import tqdm
 
 
 def parse():
@@ -35,6 +36,8 @@ def parse():
     parser.add_argument('--max-redirects', type=int, default=10,
                         help='Maximum redirect count')
     parser.add_argument('--timeout', default=1, help='Set timeout for client')
+    parser.add_argument('-p', '--show-progress', action='store_true',
+                        help='Use progress bar')
 
     args = parser.parse_args()
     url = urlparse(args.url)
@@ -55,15 +58,15 @@ def main():
     args = parse()
     logging.info(args)
     try:
-        with Client(timeout=args.timeout) as client:
+        with Client(timeout=args.timeout,
+                    show_progress=args.show_progress,
+                    output=args.output) as client:
             client.connect(args.url, args.port)
             req = Request(args.method, args.path, args.url,
                           add_header=args.header, body=args.body,
                           no_redir=args.no_redirects, form=args.form,
                           max_redir=args.max_redirects)
-            res = client.request(req)
-            body = client.parse_res(res)
-            client.output(res, args.output, body)
+            client.request(req)
 
     except Exception as e:
         sys.stderr.write(str(e) + '\n')
