@@ -65,12 +65,11 @@ def main():
                           add_header=args.header, body=args.body,
                           no_redir=args.no_redirects, form=args.form,
                           max_redir=args.max_redirects)
+            file = sys.stdout
             if args.output:
-                with open(args.output, 'wb') as file:
-                    sys.stdout = file
-                    client.request(req, file)
-            else:
-                client.request(req, sys.stdout)
+                file = open(args.output, 'w')
+            with file:
+                client.request(req, file.buffer)
 
     except Exception as e:
         sys.stderr.write(str(e) + '\n')

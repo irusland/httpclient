@@ -193,7 +193,8 @@ class ClientTestCase(unittest.TestCase):
     def test_main_exception(self):
         sys.argv = ['httpclient.py', '']
         with self.assertRaises(SystemExit):
-            httpclient.main()
+            with redirect_stdout(io.BytesIO()):
+                httpclient.main()
 
 
 if __name__ == '__main__':
