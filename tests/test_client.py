@@ -75,12 +75,12 @@ class ClientTestCase(unittest.TestCase):
         mock = ClientTestCase.MockClient()
         mock.connected = False
         with self.assertRaises(ConnectionError):
-            Client.request(mock, b'')
+            Client.request(mock, b'', sys.stdout)
 
     def test_request_sendall_fails(self):
         mock = ClientTestCase.MockClient()
         with self.assertRaises(socket.error):
-            Client.request(mock, b'')
+            Client.request(mock, b'', sys.stdout)
 
     def test_context_manager(self):
         try:
@@ -114,16 +114,16 @@ class ClientTestCase(unittest.TestCase):
             return b''
 
     def test_request(self):
-        f = io.StringIO()
+        f = io.BytesIO()
         with redirect_stdout(f):
             res = Client.request(ClientTestCase.ClientMock(),
-                                 Request('GET', '/', 'HTTP/1.1'))
+                                 Request('GET', '/', 'HTTP/1.1'), sys.stdout)
         self.assertEqual(res.status, '200')
         self.assertEqual(res.reason, 'OK')
         self.assertListEqual(list(res.headers.items()),
                              [('Server', 'httpserver'),
                               ('Content-Length', '12')])
-        self.assertEqual(f.getvalue(), '1234567890\r\n')
+        self.assertEqual(f.getvalue(), b'1234567890\r\n')
 
     def test_image_out(self):
         res = Response()
@@ -134,7 +134,7 @@ class ClientTestCase(unittest.TestCase):
             f = io.BytesIO()
             with redirect_stdout(f):
                 body = res.get_data_to_out()
-                c.output(body)
+                c.output(body, f)
             self.assertEqual(f.getvalue(), b'\x89PNG')
 
     def test_parse_args(self):
@@ -147,16 +147,6 @@ class ClientTestCase(unittest.TestCase):
         self.assertEqual(args.output, None)
         self.assertEqual(args.user_agent, 'httpclient/0.4.5')
 
-    def test_output_no_dest(self):
-        res = Response()
-        res.status = '200'
-        res.reason = 'OK'
-        res.headers = {'Content-Type': 'text/html; charset=utf-8'}
-        res.body = b'body'
-
-        with self.assertRaises(IOError):
-            Client.output(Client(output=''), '')
-
     def test_output_stdout(self):
         res = Response()
         res.status = '200'
@@ -164,8 +154,11 @@ class ClientTestCase(unittest.TestCase):
         res.headers = {'Content-Type': 'text/html; charset=utf-8'}
         res.body = b'body'
 
-        with Client() as c:
-            c.output('')
+        f = io.BytesIO()
+        with redirect_stdout(f):
+            with Client() as c:
+                c.output('out', sys.stdout)
+        self.assertEqual(b'out', f.getvalue())
 
     def test_cookie(self):
         cookie = ['a=a', 'b=b']
@@ -197,7 +190,6 @@ class ClientTestCase(unittest.TestCase):
                 return
         self.fail()
 
-    # Mock if __name__ == '__main__': test coverage
     def test_main_exception(self):
         sys.argv = ['httpclient.py', '']
         with self.assertRaises(SystemExit):

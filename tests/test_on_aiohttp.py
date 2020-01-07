@@ -2,6 +2,7 @@ import io
 import multiprocessing
 import re
 import socket
+import sys
 import time
 import unittest
 from contextlib import redirect_stdout
@@ -12,32 +13,10 @@ from aiohttp import web
 
 
 class AioHTTPTests(unittest.TestCase):
-
-    def get_res(self, s, req):
-        try:
-            s.sendall(req)
-        except Exception as e:
-            print(e)
-            pass
-
-        res = Response()
-        break_out = False
-        while not break_out:
-            try:
-                while not break_out:
-                    line = s.recv(Client.MAX_LINE)
-                    split = Response.split_keep_sep(line, b'\r\n')
-                    for spl in split:
-                        if res.dynamic_fill(spl):
-                            break_out = True
-                            break
-            except socket.timeout:
-                pass
-        return res
-
     def test_post_form(self):
         server = multiprocessing.Process(target=self.aiohttp_server_run)
         server.start()
+        time.sleep(1)
 
         form = ['a=a', 'b=b', 'key=val']
         args = {'body': None,
@@ -61,16 +40,16 @@ class AioHTTPTests(unittest.TestCase):
                       max_redir=args['max_redirects'])
 
         with Client() as c:
-            time.sleep(0.1)
-            f = io.StringIO()
+            time.sleep(1)
+            f = io.BytesIO()
             with redirect_stdout(f):
                 while True:
                     try:
                         c.connect('localhost', 8080)
                         break
                     except socket.error:
-                        time.sleep(0.1)
-                c.request(req)
+                        time.sleep(1)
+                c.request(req, sys.stdout)
 
         server.terminate()
 
@@ -80,48 +59,10 @@ class AioHTTPTests(unittest.TestCase):
             r'\r\n'
             r'(?P<value>.+?)\r\n')
 
-        body = f.getvalue()
+        body = f.getvalue().decode('utf-8')
         found = r.findall(body)
         res_form = '&'.join('='.join(x) for x in found)
         self.assertEqual(res_form, '&'.join(form))
-
-    def test_get_index(self):
-        server = multiprocessing.Process(target=self.aiohttp_server_run)
-        server.start()
-        ip = ('localhost', 8080)
-        while True:
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.connect(ip)
-                break
-            except socket.error:
-                time.sleep(0.1)
-
-        req = b'GET / HTTP/1.1\r\n\r\n'
-        res = self.get_res(s, req)
-        s.close()
-        server.terminate()
-
-        self.assertEqual(res.status, '200')
-        self.assertEqual(res.reason, 'OK')
-
-    def test_connect(self):
-        server = multiprocessing.Process(target=self.aiohttp_server_run)
-        server.start()
-
-        connected = False
-        while not connected:
-            try:
-                with Client() as c:
-                    c.connect('localhost', 8080)
-                connected = True
-                break
-            except socket.error:
-                time.sleep(0.1)
-
-        self.assertTrue(connected)
-
-        server.terminate()
 
     def aiohttp_server_run(self):
         app = web.Application()
@@ -140,6 +81,49 @@ class AioHTTPTests(unittest.TestCase):
             body = await request.read()
             return web.Response(text=body.decode('utf-8'))
         self.fail()
+
+    def get_res(self, s, req):
+        try:
+            s.sendall(req)
+        except Exception as e:
+            print(e)
+            pass
+
+        res = Response()
+        break_out = False
+        while not break_out:
+            try:
+                while not break_out:
+                    line = s.recv(Client.MAX_LINE)
+                    split = Response.split_keep_sep(line, b'\r\n')
+                    for spl in split:
+                        if res.dynamic_fill(spl):
+                            break_out = True
+                            break
+            except socket.timeout:
+                pass
+        return res
+
+    def test_get_index(self):
+        server = multiprocessing.Process(target=self.aiohttp_server_run)
+        server.start()
+        time.sleep(1)
+        ip = ('localhost', 8080)
+        while True:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect(ip)
+                break
+            except socket.error:
+                time.sleep(1)
+
+        req = b'GET / HTTP/1.1\r\n\r\n'
+        res = self.get_res(s, req)
+        s.close()
+        server.terminate()
+
+        self.assertEqual(res.status, '200')
+        self.assertEqual(res.reason, 'OK')
 
 
 if __name__ == '__main__':

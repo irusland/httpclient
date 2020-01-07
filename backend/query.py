@@ -1,4 +1,3 @@
-import logging
 import random
 import re
 import string
@@ -6,8 +5,6 @@ from email.parser import Parser
 
 import chardet
 from tqdm import tqdm
-
-from backend.http_dict import HTTPHeadersDict
 
 
 class Request:
@@ -78,7 +75,7 @@ class Response:
     def __init__(self, show_progress=False):
         self.status = None
         self.reason = None
-        self.headers = HTTPHeadersDict()
+        self.headers = {}
         self.body = b''
         self.content_type = None
         self.encoding = None

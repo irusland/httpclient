@@ -14,7 +14,7 @@ class Client:
     HTTP_PORT = 80
     HTTPS_PORT = 443
 
-    def __init__(self, timeout=1, show_progress=False, output=None):
+    def __init__(self, timeout=1, show_progress=False):
         self.connected = False
         self.timeout = timeout
 
@@ -24,11 +24,6 @@ class Client:
         self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         logging.info(f'socket created')
 
-        self.destination = output
-        # Clear file before appending
-        if self.destination:
-            with open(self.destination, 'w'):
-                pass
         self.show_progress = show_progress
 
     def __enter__(self):
@@ -39,22 +34,11 @@ class Client:
         self.connection.close()
         return False
 
-    def output(self, data):
-        if self.destination is None:
-            try:
-                sys.stdout.write(data)
-            except Exception:
-                sys.stdout.buffer.write(data)
-            logging.info('bytes printed')
-        else:
-            # Append data to file
-            if isinstance(data, str):
-                mode = 'a'
-            else:
-                mode = 'ab'
-            with open(self.destination, mode) as f:
-                f.write(data)
-                logging.info('File written')
+    def output(self, data, file):
+        if isinstance(data, str):
+            data = bytes(data, 'utf-8')
+        file.write(data)
+        logging.info('Data written')
 
     def connect(self, host, port=None):
         if port is None:
@@ -67,7 +51,7 @@ class Client:
             logging.exception(f'Connection refused error {e}')
             self.connected = False
 
-    def request(self, req: Request):
+    def request(self, req: Request, file):
         redir_count = 0
         while True:
             if not self.connected:
@@ -92,9 +76,13 @@ class Client:
                             logging.info(f'received {s}')
                             if res_builder.dynamic_fill(s):
                                 break_out = True
-                            if not res_builder.has_redirect():
+                            if (not res_builder.has_redirect() or
+                                    req.no_redirect or
+                                    (req.max_redir and
+                                     redir_count == req.max_redir)):
                                 body = res_builder.get_data_to_out()
-                                self.output(body)
+                                if body:
+                                    self.output(body, file)
                 except socket.timeout:
                     logging.info(f'body not received, waiting')
 
@@ -106,8 +94,6 @@ class Client:
                               req.host, no_redir=req.no_redirect,
                               max_redir=req.max_redir)
             else:
-                body = res_builder.get_data_to_out()
-                self.output(body)
                 break
         return res_builder
 

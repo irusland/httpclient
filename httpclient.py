@@ -34,7 +34,8 @@ def parse():
                         help='No redirect parameter')
     parser.add_argument('--max-redirects', type=int, default=10,
                         help='Maximum redirect count')
-    parser.add_argument('--timeout', default=1, help='Set timeout for client')
+    parser.add_argument('--timeout', default=1, type=int,
+                        help='Set timeout for client')
     parser.add_argument('-p', '--show-progress', action='store_true',
                         help='Use progress bar')
 
@@ -58,14 +59,18 @@ def main():
     logging.info(args)
     try:
         with Client(timeout=args.timeout,
-                    show_progress=args.show_progress,
-                    output=args.output) as client:
+                    show_progress=args.show_progress) as client:
             client.connect(args.url, args.port)
             req = Request(args.method, args.path, args.url,
                           add_header=args.header, body=args.body,
                           no_redir=args.no_redirects, form=args.form,
                           max_redir=args.max_redirects)
-            client.request(req)
+            if args.output:
+                with open(args.output, 'wb') as file:
+                    sys.stdout = file
+                    client.request(req, file)
+            else:
+                client.request(req, sys.stdout)
 
     except Exception as e:
         sys.stderr.write(str(e) + '\n')
